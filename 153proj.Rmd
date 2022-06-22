@@ -1,0 +1,440 @@
+---
+title: "153proj"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(astsa)
+library(forecast)
+library(ggplot2)
+library(TSA)
+library(tseries)
+
+setwd("/Users/channingche/Desktop") # change this
+
+# just some manipulation; not sure if it's all needed, but it works
+cpi <- read.csv("cpi.csv", header = TRUE, row.names = 1)
+cpits <- ts(cpi, start = c(1913, 1))
+dat <- c()
+for (i in 1:109) {
+  dat = c(dat, cpits[i, ])
+}
+
+# this is the data we can use
+dat <- ts(dat, start = c(1913, 1), frequency = 12)
+dat <- head(dat, -2)
+
+t <- time(dat)
+
+plot.ts(dat)
+```
+
+# polynomial fit (model 1)
+
+```{r}
+mod <- lm(dat ~ I(t) + I(t^2))
+res1 <- mod$residuals
+plot.ts(res1)
+```
+
+## one possible model
+
+This is not yet stationary. No trend, but maybe some type of seasonality is 
+present here. Let's second-order difference on the residuals. 
+
+```{r}
+d2res1 <- diff(res1, differences = 2)
+plot.ts(d2res1)
+```
+
+This looks better overall. Let's take a look at the ACF and ACF plots.
+
+```{r}
+acf2(d2res1)
+```
+
+There's clearly some seasonality in this data, as we can see from the ACF plot. 
+It appears to be annual. Let's try a lag-12 differencing to get rid of this.
+
+```{r}
+l12d2res1 <- diff(d2res1, lag = 12)
+plot.ts(l12d2res1)
+acf2(l12dres1)
+```
+
+Still some slight seasonality left over, as we can see from ACF plot, but 
+the sample ACFs are smaller, and overall it looks much better. Let's try 
+another second-order difference:
+
+```{r}
+d3l12res1 <- diff(l12dres1, differences = 2)
+plot.ts(d3l12res1)
+acf2(d3l12res1)
+```
+
+Based on the ACF and PACF plots, we can try fitting an 
+$\text{ARMA}(1, 1) \times (0,1)_{12}$ model.
+
+```{r}
+m11 <- sarima(res1, p = 1, d = 3, q = 1, P = 0, D = 1, Q = 1, S = 12)
+```
+
+## another possiblility
+
+# second order differencing (model 2)
+
+First, do second order differencing, since it looked like 
+increasing quadratically.
+
+```{r}
+d2 <- diff(dat, differences = 2)
+```
+
+Look at plot of d2, as well as ACF and PACF:
+
+```{r}
+plot.ts(d2)
+acf2(d2)
+```
+
+Doesn't look quite stationary. Still some seasonality left over. 
+
+## one possible model
+
+Try lag-12 differencing now.
+
+```{r}
+l12d2 <- diff(d2, lag = 12)
+```
+
+Look at plot of l12d2, as well as ACF and PACF:
+
+```{r}
+plot.ts(l12d2)
+acf2(l12d2)
+```
+
+ACF looks better, and seems to more or less cut off eventally. PACF seems to 
+never really cut off. Let's try one more round of differencing to clean up 
+the ACF a little. This could be the ACF of a sparse MA model.
+
+```{r}
+######## this can be ignored
+#l12d3 <- diff(l12d2, differences = 1)
+#plot.ts(l12d3)
+#acf2(l12d3)
+#This ACF looks better. The ACF does fade away eventually; can say that around 
+#lag 15 we see the last substantial sample ACF. PACF plot never cuts off; this 
+#could be a sparse MA model.
+```
+
+For the lag-12 second-order differenced series, we can try to model it as 
+$\text{ARMA(0, 3)} \times (0, 1)_{12}$. The ACF for this model is nonzero only 
+at lags $h = 0, 1, 2, 3, 12, 13, 14, 15$, which is fairly close to the sample ACF 
+for the earlier lags (if we ignore the later lags).
+Trying this, we get:
+
+```{r}
+m21 <- sarima(dat, p = 0, d = 2, q = 3, P = 0, D = 1, Q = 1, S = 12)
+```
+
+## another possible model
+
+Can also try the auto.arima model
+
+```{r}
+auto.arima(dat)
+```
+
+This yields the following model:
+
+```{r}
+# sarima(dat, p = 2, d = 2, q = 1, P = 0, D = 0, Q = 2, S = 12)
+```
+
+We're not just going to copy this model. But it suggests taking two lag-12 
+differences. So we're going to consider taking 
+two seasonal differences, since in fact from the ACF of `l12d2`, it looked 
+like there still might be a little bit of seasonality left over, so it may 
+not be such a bad idea.
+
+```{r}
+l12l12d2 <- diff(l12d2, lag = 12)
+plot.ts(l12l12d2)
+acf2(l12l12d2)
+```
+
+Again, PACF doesn't really cut off. Based on the ACF plot, we can try
+$\text{ARMA}(0, 3) \times (0, 2)_{12}$. This differs from the previous model 
+in that we are adding another seasonal term $B^{24}$ (in addition to doing 
+another lag-12 differencing), and we are trying to capture the more substantial 
+lags at 24, 25, 26, and 27 months.
+
+```{r}
+m22 <- sarima(dat, p = 0, d = 2, q = 3, P = 0, D = 2, Q = 2, S = 12)
+```
+
+# New attempt using sqrt
+
+```{r}
+sqdat <- sqrt(dat)
+```
+
+Overall looks quadratic trend. Try 2 differences.
+
+## one try
+
+```{r}
+d2sqdat <- diff(sqdat, differences = 2)
+plot.ts(d2sqdat)
+acf2(d2sqdat)
+```
+
+The plot doesn't look bad, but maybe some seasonality. Looking at the acf, 
+there are spikes at every year that seem significant, so let's take another 
+lag-12 difference.
+
+```{r}
+l12d2sqdat <- diff(d2sqdat, lag = 12)
+plot.ts(l12d2sqdat)
+acf2(l12d2sqdat)
+```
+
+Based on the PACF, this looks like an MA model, since the PACF never seems to 
+vanish. There are substantial sample ACFs at lags 1, 11, 12. We can try 
+to model this as $\text{ARMA}(0, 1) \times (0, 1)_{12}$, which has nonzero 
+ACF at lags 1, 12, and 13 (so it's pretty close). Let's try fitting this model.
+
+```{r}
+m31 <- sarima(sqdat, p = 0, d = 2, q = 1, P = 0, D = 1, Q = 1, S = 12)
+```
+
+## auto arima suggestion
+
+```{r}
+auto.arima(sqdat)
+```
+
+This recommends adding an AR parameter while not doing the lag-13 differencing. 
+It also recommends having another seasonal MA parameter, but this is hard to 
+justify based on the ACF plot. 
+But the lag-12 differencing definitely seems necessary for the reasons mentioned 
+before, so we'll keep it. We will add the AR parameter, though. And although the 
+Ljung-Box test is not meant to be interpreted this way, we note that there are 
+actually a few lags where the p-value is not significant, as opposed to what 
+we saw before, so we the inclusion of this AR parameter is justified.
+
+```{r}
+m32 <- sarima(sqdat, p = 1, d = 2, q = 1, P = 0, D = 1, Q = 1, S = 12)
+```
+
+Model diagnostic plots look much better for both.
+
+
+
+
+
+
+# another box-cox transform, lambda = 1/3
+
+```{r}
+bc <- (dat^(1/3) - 1) / (1/3)
+plot.ts(bc)
+```
+
+## We can view this as sort of a cubic trend. So we take three differences.
+
+```{r}
+d3bc <- diff(bc, differences = 3) 
+plot.ts(d3bc)
+acf2(d3bc)
+```
+
+### first model
+
+There's two spikes in the plot of the time series, but without those, this 
+actually looks fairly stationary. Based on ACF/PACF plots, probably some sort 
+of MA model. Try fitting MA(4) (yes, there's a spike at 4 years, but we'll 
+just ignore it) because we see 4 significant spikes at the beginning.
+
+```{r}
+m41 <- sarima(bc, p = 0, d = 3, q = 4, P = 0, D = 0, Q = 0, S = 0)
+m41$AIC
+m41$AICc
+m41$BIC
+```
+
+### auto.arima suggestion
+
+auto.arima suggests ARIMA(1, 0, 0)(1, 0, 0)[12] for `d3bc`. We don't see why 
+the seasonal AR component of order 12 should be included, but it may make sense 
+to include the regular AR component. We try this, and we note that there are 
+more significant p-values for the Ljung-Box test than there were before, which 
+justifies our inclusion of the p = 1.
+
+```{r}
+m42 <- sarima(bc, p = 1, d = 3, q = 4, P = 0, D = 0, Q = 0, S = 0)
+```
+
+## fitting cubic polynomial instead of differencing
+
+```{r}
+cub <- lm(bc ~ t + I(t^2) + I(t^3))
+cres <- cub$residuals
+plot.ts(cres)
+```
+
+### one possibility 
+
+Clearly residuals are not stationary. Try taking two differences (one difference 
+does not even look close to being stationary).
+
+```{r}
+d2cres <- diff(cres, differences = 2)
+plot.ts(d2cres)
+acf2(d2cres)
+```
+
+There may be seasonality. Try taking lag-12 difference.
+
+```{r}
+l12d2cres <- diff(d2cres, lag = 12)
+plot.ts(l12d2cres)
+acf2(l12d2cres)
+```
+
+Looks pretty stationary. There are one or two big spikes in the TS plot, but 
+without those, it looks pretty good. PACF never really vanishes. Based on 
+ACF, we can try ARIMA(0, 2, 2)(0, 0, 1)[12].
+
+```{r}
+m51 <- sarima(cres, p = 0, d = 2, q = 2, P = 0, D = 0, Q = 1, S = 12)
+```
+
+### another possibility
+
+auto.arima suggestion
+
+```{r}
+auto.arima(cres)
+```
+
+Suggests using using ARMA(1, 1) to model `cres`. Now, we think that we need to 
+include the seasonal MA component, but we will take the suggestion of adding 
+the AR parameter. This results in the model
+
+```{r}
+m52 <- sarima(cres, p = 1, d = 2, q = 1, P = 0, D = 0, Q = 1, S = 12)
+```
+
+We notice that for some of the p-values of the Ljung-Box test, they are not 
+significant. This suggests that this model may be an even better fit than 
+the one we had previously, so we keep it. This also has better in-sample 
+fit than the auto.arima() model based on AIC, AICc, and BIC, so we will 
+pick this one over the auto.arima model.
+
+# cross-validation
+
+We have data from 1913 to 2021. Let's train on 1913 to 2000 and perform the 
+time series cross validation from HW5 from 2001 to 2021. 
+
+## 4x series
+
+```{r}
+sse4 <- matrix(NA, nrow = 21, ncol = 2)
+
+for (i in 1:21) {
+    # special case for i == 21 because we have only 10 months of data in 2021
+        if (i == 21) { 
+                train = window(bc, start = 1913, end = 2000 + i - 0.0001)
+                test = window(bc, start = 2000 + i, end = 2000 + i + 0.9999)   
+                model1 = sarima.for(train, n.ahead = 10, 
+                            p = 0, d = 3, q = 4, P = 0, D = 0, Q = 0, S = 0)
+                model2 = sarima.for(train, n.ahead = 10, 
+                            p = 1, d = 3, q = 4, P = 0, D = 0, Q = 0, S = 0)
+                sse4[i, 1] = sum((test - model1$pred)^2)
+                sse4[i, 2] = sum((test - model2$pred)^2)
+        } else {
+        train = window(bc, start = 1913, end = 2000 + i - 0.0001)
+        test = window(bc, start = 2000 + i, end = 2000 + i + 0.9999)
+        model1 = sarima.for(train, n.ahead = 12, 
+                            p = 0, d = 3, q = 4, P = 0, D = 0, Q = 0, S = 0)
+        model2 = sarima.for(train, n.ahead = 12, 
+                            p = 1, d = 3, q = 4, P = 0, D = 0, Q = 0, S = 0)
+        sse4[i, 1] = sum((test - model1$pred)^2)
+        sse4[i, 2] = sum((test - model2$pred)^2)
+        }
+}
+
+# cross-validation score for m41
+(apply(sse4, 2, sum)/21)[1]
+# cross-validation score for m42
+(apply(sse4, 2, sum)/21)[2]
+```
+
+## 5x series
+
+```{r}
+months <- factor(cycle(bc))
+sse5 <- matrix(NA, nrow = 21, ncol = 2)
+
+for (i in 1:21) {
+    # special case for i == 11 since we only have 10 months of data in 2021
+        if (i == 21) {
+            split = 1056 + 12*(i - 1) # last point of train
+            tim = t[1:split]
+            month = months[1:split]
+            train = bc[1:split]
+            test = bc[(split + 1):(split + 10)]
+            model3 = lm(train ~ I(tim) + I(tim^2) + I(tim^3))
+            model4 = lm(train ~ I(tim) + I(tim^2) + I(tim^3))
+            model3res = model3$residuals
+            model4res = model4$residuals
+            sse5[i, 1] = sum((test - (predict(model3, 
+                                        data.frame(tim = t[(split + 1):(split + 10)]))
+                         + sarima.for(model3res, 
+                               n.ahead = 10, 
+                               p = 0, d = 2, q = 2, 
+                               P = 0, D = 0, Q = 1, S = 12)$pred))^2)
+            sse5[i, 2] = sum((test - (predict(model4, 
+                                        data.frame(tim = t[(split + 1):(split + 10)]))
+                         + sarima.for(model4res, 
+                               n.ahead = 10, 
+                               p = 1, d = 2, q = 1, 
+                               P = 0, D = 0, Q = 1, S = 12)$pred))^2)
+        } else {
+            split = 1056 + 12*(i - 1) # last point of train
+            tim = t[1:split]
+            month = months[1:split]
+            train = bc[1:split]
+            test = bc[(split + 1):(split + 12)]
+            model3 = lm(train ~ I(tim) + I(tim^2) + I(tim^3))
+            model4 = lm(train ~ I(tim) + I(tim^2) + I(tim^3))
+            model3res = model3$residuals
+            model4res = model4$residuals
+            sse5[i, 1] = sum((test - (predict(model3, 
+                                        data.frame(tim = t[(split + 1):(split + 12)]))
+                         + sarima.for(model3res, 
+                               n.ahead = 12, 
+                               p = 0, d = 2, q = 2, 
+                               P = 0, D = 0, Q = 1, S = 12)$pred))^2)
+            sse5[i, 2] = sum((test - (predict(model4, 
+                                        data.frame(tim = t[(split + 1):(split + 12)]))
+                         + sarima.for(model4res, 
+                               n.ahead = 12, 
+                               p = 1, d = 2, q = 1, 
+                               P = 0, D = 0, Q = 1, S = 12)$pred))^2)
+        }
+}
+
+# cross-validation score for m51
+(apply(sse5, 2, sum)/21)[1]
+# cross-validation score for m52
+(apply(sse5, 2, sum)/21)[2]
+```
+
+Model `m52` is actually the best in terms of cross-validation score.
